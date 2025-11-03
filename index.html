@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>YukiMusic</title>
+  <style>
+    :root { --radius: 10px; }
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; }
+    header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+    h1 { margin: 0; font-size: 24px; }
+    .sub { opacity: .7; font-size: 13px; }
+    .bar { margin: 14px 0; display: flex; gap: 8px; flex-wrap: wrap; }
+    button, .chip {
+      padding: 8px 12px; border: 1px solid #ddd; background: #fff; border-radius: var(--radius); cursor: pointer;
+    }
+    button[disabled] { opacity: .5; cursor: default; }
+    .chip { user-select: none; }
+    .chip.on { border-color: #bbb; background: #f6f6f6; }
+    #now { margin: 8px 0; opacity: .85; font-size: 14px; }
+    audio { width: 100%; margin: 10px 0 18px; }
+    ul { list-style: none; padding: 0; margin: 0; }
+    li {
+      display: grid; grid-template-columns: 1fr auto; gap: 10px;
+      padding: 10px; border: 1px solid #eee; border-radius: var(--radius); margin-bottom: 8px;
+      align-items: center;
+    }
+    li.active { background: #f8f8f8; border-color: #ddd; }
+    .title { font-weight: 600; }
+    .small { font-size: 12px; opacity: .7; }
+    .right { display: flex; gap: 6px; }
+    a.dl { text-decoration: none; border: 1px solid #eee; padding: 6px 8px; border-radius: 8px; }
+    .hint { margin-top: 14px; font-size: 12px; opacity: .7; }
+    .error { color: #b00020; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>YukiMusic</h1>
+    <span class="sub">Playlist tự build từ thư mục <code>Music/</code> trong repo</span>
+  </header>
+
+  <div class="bar">
+    <button id="prev">⏮ Trước</button>
+    <button id="play">▶️ Phát</button>
+    <button id="pause" disabled>⏸ Dừng</button>
+    <button id="next">⏭ Sau</button>
+    <span class="chip" id="shuffle">🔀 Shuffle</span>
+    <span class="chip" id="loop">🔁 Lặp bài</span>
+  </div>
+
+  <div id="now">Đang tải danh sách nhạc…</div>
+  <audio id="player" controls preload="metadata"></audio>
+
+  <ul id="list"></ul>
+
+  <div class="hint">
+    Mẹo: Repo phải <b>public</b> để gọi GitHub API không cần token. Phím tắt: Space (Play/Pause), ←/→ (Trước/Sau), S (Shuffle), L (Loop).
+  </div>
+
+<script>
+/* ==== CONFIG: đổi 2 dòng dưới cho khớp GitHub của bạn ==== */
+const OWNER = "your-github-username";
+const REPO  = "YukiMusic";
+/* ========================================================= */
+const MUSIC_PATH = "Music"; // đúng y tên thư mục (phân biệt hoa/thường)
+
+const exts = ['.mp3','.m4a','.ogg','.wav','.flac'];
+
+const $ = s => document.querySelector(s);
+const player = $('#player');
+const listEl = $('#list');
+const nowEl = $('#now');
+const btnPrev = $('#prev'), btnPlay = $('#play'), btnPause = $('#pause'), btnNext = $('#next');
+const chipShuffle = $('#shuffle'), chipLoop = $('#loop');
+
+let tracks = [];   // {name, url, size}
+let idx = -1;
+let shuffle = JSON.parse(localStorage.getItem('yk_shuffle') || 'false');
+let loop = JSON.parse(localStorage.getItem('yk_loop') || 'false');
+
+function setChipStates() {
+  chipShuffle.classList.toggle('on', shuffle);
+  chipLoop.classList.toggle('on', loop);
+  player.loop = loop;
+}
+setChipStates();
+
+function fmtName(name) {
+  return name.replace(/\.[^.]+$/, '').replace(/[_-]+/g,' ').trim();
+}
+
+function setActive(i) {
+  [...listEl.children].forEach((li,k)=>li.classList.toggle('active', k===i));
+}
+
+function setNow(text) {
+  nowEl.textContent = text || '—';
+}
+
+function renderList() {
+  listEl.innerHTML = '';
+  tracks.forEach((t,i)=>{
+    const li = document.createElement('li');
+    const left = document.createElement('div');
+    const right = document.createElement('div');
+    left.innerHTML = `<div class="title">${fmtName(t.name)}</div><div class="small">${t.name}</div>`;
+    right.className = 'right';
+    const btn = document.createElement('button');
+    btn.textContent = '▶️';
+    btn.addEventListener('click', ()=> playAt(i));
+    const dl = document.createElement('a');
+    dl.href = t.url; dl.download = t.name; dl.textContent = '⬇️'; dl.className = 'dl'; dl.title = 'Tải về';
+    right.appendChild(btn); right.appendChild(dl);
+    li.appendChild(left); li.appendChild(right);
+    listEl.appendChild(li);
+  });
+}
+
+function playAt(i) {
+  if (i<0 || i>=tracks.length) return;
+  idx = i;
+  const t = tracks[i];
+  player.src = t.url;
+  setActive(i);
+  setNow(`Đang phát: ${fmtName(t.name)}`);
+  player.play().then(()=> {
+    btnPlay.disabled = true; btnPause.disabled = false;
+  }).catch(()=> {
+    // Autoplay có thể bị chặn: để user bấm Play thủ công
+    btnPlay.disabled = false; btnPause.disabled = true;
+  });
+}
+
+function nextTrack() {
+  if (!tracks.length) return;
+  if (shuffle) {
+    let r;
+    do { r = Math.floor(Math.random()*tracks.length); } while (tracks.length>1 && r===idx);
+    playAt(r);
+  } else {
+    playAt((idx+1) % tracks.length);
+  }
+}
+function prevTrack() {
+  if (!tracks.length) return;
+  playAt((idx-1+tracks.length)%tracks.length);
+}
+
+btnPlay.addEventListener('click', ()=>{
+  if (idx===-1 && tracks.length) playAt(0);
+  else player.play();
+  btnPlay.disabled = true; btnPause.disabled = false;
+});
+btnPause.addEventListener('click', ()=>{ player.pause(); btnPause.disabled = true; btnPlay.disabled = false; });
+btnNext.addEventListener('click', nextTrack);
+btnPrev.addEventListener('click', prevTrack);
+
+chipShuffle.addEventListener('click', ()=>{
+  shuffle = !shuffle; localStorage.setItem('yk_shuffle', JSON.stringify(shuffle)); setChipStates();
+});
+chipLoop.addEventListener('click', ()=>{
+  loop = !loop; localStorage.setItem('yk_loop', JSON.stringify(loop)); setChipStates();
+});
+
+player.addEventListener('ended', ()=> { if (!player.loop) nextTrack(); });
+
+document.addEventListener('keydown', (e)=>{
+  if (e.target.closest('input,textarea')) return;
+  if (e.code === 'Space') { e.preventDefault(); player.paused ? btnPlay.click() : btnPause.click(); }
+  if (e.key === 'ArrowRight') { e.preventDefault(); btnNext.click(); }
+  if (e.key === 'ArrowLeft')  { e.preventDefault(); btnPrev.click(); }
+  if (e.key.toLowerCase() === 's') chipShuffle.click();
+  if (e.key.toLowerCase() === 'l') chipLoop.click();
+});
+
+async function fetchTracks() {
+  try {
+    const api = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${encodeURIComponent(MUSIC_PATH)}`;
+    const res = await fetch(api, { headers: { 'Accept': 'application/vnd.github.v3+json' } });
+    if (!res.ok) {
+      throw new Error(`GitHub API lỗi ${res.status}. Kiểm tra OWNER/REPO/Pages và repo có public.`)
+    }
+    const data = await res.json();
+    tracks = data
+      .filter(x => x.type==='file' && exts.some(e=>x.name.toLowerCase().endsWith(e)))
+      .map(x => ({ name: x.name, url: x.download_url, size: x.size }));
+
+    if (!tracks.length) { setNow(`Thư mục "${MUSIC_PATH}" chưa có file nhạc hợp lệ.`); return; }
+
+    // Sắp xếp nhẹ: theo tên tự nhiên (localeCompare hỗ trợ tiếng Việt)
+    tracks.sort((a,b)=> a.name.localeCompare(b.name, 'vi', { numeric: true, sensitivity: 'base' }));
+
+    renderList();
+    setNow(`Có ${tracks.length} bài. Chọn bài hoặc bấm ▶️.`);
+    // Thử auto phát bài đầu nếu trình duyệt cho phép
+    playAt(0);
+  } catch (err) {
+    console.error(err);
+    setNow(err.message || 'Không tải được danh sách nhạc.');
+    nowEl.classList.add('error');
+  }
+}
+
+fetchTracks();
+</script>
+</body>
+</html>
